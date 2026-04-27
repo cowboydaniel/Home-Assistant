@@ -215,15 +215,15 @@
             <div class="control-grid">
                 <div class="metric-card">
                     <p class="metric-label">Water Usage</p>
-                    <p class="metric-value" id="waterUsage">412 gal</p>
+                    <p class="metric-value" id="waterUsage">-- gal</p>
                 </div>
                 <div class="metric-card">
                     <p class="metric-label">Electricity Usage</p>
-                    <p class="metric-value" id="electricityUsage">31.7 kWh</p>
+                    <p class="metric-value" id="electricityUsage">-- kWh</p>
                 </div>
                 <div class="metric-card">
                     <p class="metric-label">Weather</p>
-                    <p class="metric-value" id="weatherInfo">72°F · Clear</p>
+                    <p class="metric-value" id="weatherInfo">Loading...</p>
                 </div>
             </div>
 
@@ -234,7 +234,7 @@
                         <button onclick="setDeviceState('camera', 'On')">Turn On</button>
                         <button onclick="setDeviceState('camera', 'Off')">Turn Off</button>
                     </div>
-                    <div class="status-text" id="cameraStatus">Status: Off</div>
+                    <div class="status-text" id="cameraStatus">Status: --</div>
                 </div>
 
                 <div class="control-card">
@@ -243,7 +243,7 @@
                         <button onclick="setDeviceState('light', 'On')">Turn On</button>
                         <button onclick="setDeviceState('light', 'Off')">Turn Off</button>
                     </div>
-                    <div class="status-text" id="lightStatus">Status: Off</div>
+                    <div class="status-text" id="lightStatus">Status: --</div>
                 </div>
 
                 <div class="control-card">
@@ -252,7 +252,7 @@
                         <button onclick="setDeviceState('lock', 'Locked')">Lock</button>
                         <button onclick="setDeviceState('lock', 'Unlocked')">Unlock</button>
                     </div>
-                    <div class="status-text" id="lockStatus">Status: Locked</div>
+                    <div class="status-text" id="lockStatus">Status: --</div>
                 </div>
             </div>
         </section>
@@ -368,18 +368,64 @@
 
             document.getElementById(tabId).classList.add("active");
             document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add("active");
+
+            if (tabId === "controlTab") {
+                fetchControlState();
+            }
         }
 
-        function setDeviceState(deviceType, state) {
+        async function fetchControlState() {
+            try {
+                const res = await fetch("/control/state");
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || "Failed to load control state.");
+                }
+
+                document.getElementById("waterUsage").textContent = `${data.metrics.water_usage_gal} gal`;
+                document.getElementById("electricityUsage").textContent = `${data.metrics.electricity_usage_kwh} kWh`;
+                document.getElementById("weatherInfo").textContent = data.metrics.weather;
+
+                document.getElementById("cameraStatus").textContent = `Status: ${data.devices.camera}`;
+                document.getElementById("lightStatus").textContent = `Status: ${data.devices.light}`;
+                document.getElementById("lockStatus").textContent = `Status: ${data.devices.lock}`;
+            } catch (error) {
+                console.error("Control state error:", error);
+                document.getElementById("weatherInfo").textContent = "Offline";
+            }
+        }
+
+        async function setDeviceState(deviceType, state) {
             const statusMap = {
                 camera: "cameraStatus",
                 light: "lightStatus",
                 lock: "lockStatus"
             };
 
-            const statusElement = document.getElementById(statusMap[deviceType]);
-            if (statusElement) {
-                statusElement.textContent = `Status: ${state}`;
+            try {
+                const res = await fetch("/control/device", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        device: deviceType,
+                        state
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || "Failed to update device state.");
+                }
+
+                const statusElement = document.getElementById(statusMap[deviceType]);
+                if (statusElement) {
+                    statusElement.textContent = `Status: ${data.state}`;
+                }
+            } catch (error) {
+                alert(`Control update failed: ${error.message}`);
             }
         }
 
@@ -408,6 +454,8 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        fetchControlState();
     </script>
 </body>
 </html>
