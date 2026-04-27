@@ -10,9 +10,23 @@ import requests
 import speech_recognition as sr
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from flask_cors import cross_origin
+from jinja2 import ChoiceLoader, FileSystemLoader
 
 # Initialize Flask App
-app = Flask(__name__, template_folder=".")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder="templates")
+
+template_search_paths = [
+    os.path.join(BASE_DIR, "templates"),
+    BASE_DIR,
+]
+
+app.jinja_loader = ChoiceLoader(
+    [
+        FileSystemLoader(template_search_paths),
+        app.jinja_loader,
+    ]
+)
 
 # Initialize Text-to-Speech Engine
 engine = pyttsx3.init()
