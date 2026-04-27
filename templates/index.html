@@ -147,6 +147,16 @@
             padding: 12px;
         }
 
+        .metric-card.clickable {
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .metric-card.clickable:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+        }
+
         .metric-label,
         .control-title {
             margin: 0 0 6px;
@@ -170,6 +180,83 @@
             margin-top: 8px;
             font-size: 13px;
             color: var(--muted-text-color);
+        }
+
+        .graph-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+        }
+
+        .graph-modal.open {
+            display: flex;
+        }
+
+        .graph-modal-content {
+            width: min(980px, 95vw);
+            max-height: 92vh;
+            overflow: auto;
+            background: var(--panel-bg-color);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid rgba(127, 127, 127, 0.25);
+        }
+
+        .graph-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .graph-toolbar select {
+            padding: 8px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(127, 127, 127, 0.35);
+            background: transparent;
+            color: var(--text-color);
+        }
+
+        .graph-close {
+            margin: 0;
+        }
+
+        .graph-svg {
+            width: 100%;
+            height: 520px;
+            border-radius: 10px;
+            background: rgba(127, 127, 127, 0.08);
+            border: 1px solid rgba(127, 127, 127, 0.25);
+        }
+
+        .graph-axis {
+            stroke: var(--muted-text-color);
+            stroke-width: 1;
+        }
+
+        .graph-tick {
+            stroke: rgba(127, 127, 127, 0.3);
+            stroke-width: 1;
+        }
+
+        .graph-line {
+            fill: none;
+            stroke: #4ea1ff;
+            stroke-width: 3;
+        }
+
+        .graph-point {
+            fill: #7fb9ff;
+        }
+
+        .graph-label {
+            fill: var(--text-color);
+            font-size: 12px;
         }
 
         @keyframes blink {
@@ -213,7 +300,14 @@
             <h2>Control Panel</h2>
 
             <div class="control-grid">
-                <div class="metric-card">
+                <div
+                    class="metric-card clickable"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Open water usage graph"
+                    onclick="openWaterUsageGraph()"
+                    onkeydown="handleWaterUsagePaneKeydown(event)"
+                >
                     <p class="metric-label">Water Usage</p>
                     <p class="metric-value" id="waterUsage">-- L</p>
                 </div>
@@ -256,6 +350,22 @@
                 </div>
             </div>
         </section>
+    </div>
+
+    <div class="graph-modal" id="waterUsageModal" aria-hidden="true">
+        <div class="graph-modal-content" role="dialog" aria-modal="true" aria-label="Water usage graph">
+            <div class="graph-toolbar">
+                <label for="waterUsageRange">Daily water usage range:</label>
+                <select id="waterUsageRange">
+                    <option value="week">Week</option>
+                    <option value="month">Month</option>
+                    <option value="quarter">Quarter</option>
+                    <option value="year">Year</option>
+                </select>
+                <button class="graph-close" type="button" onclick="closeWaterUsageGraph()">Close</button>
+            </div>
+            <svg id="waterUsageChart" class="graph-svg" viewBox="0 0 920 520" role="img" aria-label="Daily water usage chart"></svg>
+        </div>
     </div>
 
     <script>
@@ -429,10 +539,127 @@
             }
         }
 
+        function openWaterUsageGraph() {
+            const modal = document.getElementById("waterUsageModal");
+            modal.classList.add("open");
+            modal.setAttribute("aria-hidden", "false");
+            drawWaterUsageChart(document.getElementById("waterUsageRange").value);
+        }
+
+        function handleWaterUsagePaneKeydown(event) {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openWaterUsageGraph();
+            }
+        }
+
+        function closeWaterUsageGraph() {
+            const modal = document.getElementById("waterUsageModal");
+            modal.classList.remove("open");
+            modal.setAttribute("aria-hidden", "true");
+        }
+
+        function generateWaterUsageSeries(days) {
+            const points = [];
+            let base = 200;
+            for (let i = 0; i < days; i += 1) {
+                base += (Math.random() - 0.5) * 8;
+                const seasonal = Math.sin(i / 10) * 10;
+                const noise = (Math.random() - 0.5) * 14;
+                points.push(Math.max(70, Math.round(base + seasonal + noise)));
+            }
+            return points;
+        }
+
+        function drawWaterUsageChart(range) {
+            const config = {
+                week: { days: 7, labelEvery: 1 },
+                month: { days: 30, labelEvery: 5 },
+                quarter: { days: 90, labelEvery: 15 },
+                year: { days: 365, labelEvery: 60 }
+            };
+
+            const { days, labelEvery } = config[range] || config.week;
+            const values = generateWaterUsageSeries(days);
+            const chart = document.getElementById("waterUsageChart");
+
+            const width = 920;
+            const height = 520;
+            const margin = { top: 20, right: 20, bottom: 45, left: 52 };
+            const plotWidth = width - margin.left - margin.right;
+            const plotHeight = height - margin.top - margin.bottom;
+            const minY = Math.min(...values);
+            const maxY = Math.max(...values);
+            const yPadding = Math.max(8, Math.round((maxY - minY) * 0.12));
+            const yMin = minY - yPadding;
+            const yMax = maxY + yPadding;
+
+            const xScale = (i) => margin.left + (i / (days - 1)) * plotWidth;
+            const yScale = (v) => margin.top + (1 - (v - yMin) / (yMax - yMin)) * plotHeight;
+
+            const pathD = values
+                .map((v, i) => `${i === 0 ? "M" : "L"} ${xScale(i).toFixed(2)} ${yScale(v).toFixed(2)}`)
+                .join(" ");
+
+            let ticks = "";
+            for (let t = 0; t <= 4; t += 1) {
+                const yVal = yMin + ((yMax - yMin) * t) / 4;
+                const y = yScale(yVal);
+                ticks += `<line class="graph-tick" x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" />`;
+                ticks += `<text class="graph-label" x="8" y="${y + 4}">${Math.round(yVal)} L</text>`;
+            }
+
+            const xLabels = [];
+            for (let i = 0; i < days; i += labelEvery) {
+                xLabels.push(i);
+            }
+            if (xLabels[xLabels.length - 1] !== days - 1) {
+                xLabels.push(days - 1);
+            }
+
+            let labels = "";
+            xLabels.forEach((i) => {
+                const x = xScale(i);
+                labels += `<text class="graph-label" x="${x}" y="${height - 12}" text-anchor="middle">Day ${i + 1}</text>`;
+            });
+
+            const pointStep = Math.max(1, Math.floor(days / 30));
+            let points = "";
+            for (let i = 0; i < days; i += pointStep) {
+                points += `<circle class="graph-point" cx="${xScale(i)}" cy="${yScale(values[i])}" r="2.6"></circle>`;
+            }
+            if ((days - 1) % pointStep !== 0) {
+                points += `<circle class="graph-point" cx="${xScale(days - 1)}" cy="${yScale(values[days - 1])}" r="2.6"></circle>`;
+            }
+
+            chart.innerHTML = `
+                <line class="graph-axis" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" />
+                <line class="graph-axis" x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" />
+                ${ticks}
+                <path class="graph-line" d="${pathD}" />
+                ${points}
+                ${labels}
+            `;
+        }
+
         document.addEventListener("keydown", (event) => {
             if (event.key === "Enter" && document.getElementById("chatTab").classList.contains("active")) {
                 event.preventDefault();
                 sendMessage();
+            }
+
+            if (event.key === "Escape" && document.getElementById("waterUsageModal").classList.contains("open")) {
+                closeWaterUsageGraph();
+            }
+        });
+
+        document.getElementById("waterUsageRange").addEventListener("change", (event) => {
+            drawWaterUsageChart(event.target.value);
+        });
+
+        document.getElementById("waterUsageModal").addEventListener("click", (event) => {
+            if (event.target.id === "waterUsageModal") {
+                closeWaterUsageGraph();
             }
         });
 
