@@ -311,7 +311,14 @@
                     <p class="metric-label">Water Usage</p>
                     <p class="metric-value" id="waterUsage">-- L</p>
                 </div>
-                <div class="metric-card">
+                <div
+                    class="metric-card clickable"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Open electricity usage graph"
+                    onclick="openUsageGraph('electricity')"
+                    onkeydown="handleUsagePaneKeydown(event, 'electricity')"
+                >
                     <p class="metric-label">Electricity Usage</p>
                     <p class="metric-value" id="electricityUsage">-- kWh</p>
                 </div>
@@ -352,11 +359,11 @@
         </section>
     </div>
 
-    <div class="graph-modal" id="waterUsageModal" aria-hidden="true">
-        <div class="graph-modal-content" role="dialog" aria-modal="true" aria-label="Water usage graph">
+    <div class="graph-modal" id="usageModal" aria-hidden="true">
+        <div class="graph-modal-content" role="dialog" aria-modal="true" aria-label="Usage graph">
             <div class="graph-toolbar">
-                <label for="waterUsageRange">Daily water usage range:</label>
-                <select id="waterUsageRange">
+                <label for="usageRange" id="usageRangeLabel">Daily water usage range:</label>
+                <select id="usageRange">
                     <option value="week">Week</option>
                     <option value="month">Month</option>
                     <option value="quarter">Quarter</option>
@@ -364,7 +371,7 @@
                 </select>
                 <button class="graph-close" type="button" onclick="closeWaterUsageGraph()">Close</button>
             </div>
-            <svg id="waterUsageChart" class="graph-svg" viewBox="0 0 920 520" role="img" aria-label="Daily water usage chart"></svg>
+            <svg id="usageChart" class="graph-svg" viewBox="0 0 920 520" role="img" aria-label="Daily usage chart"></svg>
         </div>
     </div>
 
@@ -539,39 +546,67 @@
             }
         }
 
+        let activeUsageType = "water";
+
         function openWaterUsageGraph() {
-            const modal = document.getElementById("waterUsageModal");
+            openUsageGraph("water");
+        }
+
+        function openUsageGraph(usageType) {
+            activeUsageType = usageType;
+            const modal = document.getElementById("usageModal");
+            const label = document.getElementById("usageRangeLabel");
+            const chart = document.getElementById("usageChart");
+
+            label.textContent = usageType === "electricity"
+                ? "Daily electricity usage range:"
+                : "Daily water usage range:";
+            chart.setAttribute(
+                "aria-label",
+                usageType === "electricity" ? "Daily electricity usage chart" : "Daily water usage chart"
+            );
+
             modal.classList.add("open");
             modal.setAttribute("aria-hidden", "false");
-            drawWaterUsageChart(document.getElementById("waterUsageRange").value);
+            drawUsageChart(document.getElementById("usageRange").value, usageType);
         }
 
         function handleWaterUsagePaneKeydown(event) {
+            handleUsagePaneKeydown(event, "water");
+        }
+
+        function handleUsagePaneKeydown(event, usageType) {
             if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
-                openWaterUsageGraph();
+                openUsageGraph(usageType);
             }
         }
 
         function closeWaterUsageGraph() {
-            const modal = document.getElementById("waterUsageModal");
+            const modal = document.getElementById("usageModal");
             modal.classList.remove("open");
             modal.setAttribute("aria-hidden", "true");
         }
 
-        function generateWaterUsageSeries(days) {
+        function generateUsageSeries(days, usageType) {
             const points = [];
-            let base = 200;
+            let base = usageType === "electricity" ? 34 : 200;
             for (let i = 0; i < days; i += 1) {
-                base += (Math.random() - 0.5) * 8;
-                const seasonal = Math.sin(i / 10) * 10;
-                const noise = (Math.random() - 0.5) * 14;
-                points.push(Math.max(70, Math.round(base + seasonal + noise)));
+                const drift = usageType === "electricity" ? 0.7 : 8;
+                const seasonalFactor = usageType === "electricity" ? 1.8 : 10;
+                const noiseFactor = usageType === "electricity" ? 1.5 : 14;
+                const minimum = usageType === "electricity" ? 8 : 70;
+
+                base += (Math.random() - 0.5) * drift;
+                const seasonal = Math.sin(i / 10) * seasonalFactor;
+                const noise = (Math.random() - 0.5) * noiseFactor;
+                const value = base + seasonal + noise;
+                points.push(usageType === "electricity" ? Number(Math.max(minimum, value).toFixed(1)) : Math.round(Math.max(minimum, value)));
             }
             return points;
         }
 
-        function drawWaterUsageChart(range) {
+        function drawUsageChart(range, usageType = activeUsageType) {
             const config = {
                 week: { days: 7, labelEvery: 1 },
                 month: { days: 30, labelEvery: 5 },
@@ -580,8 +615,9 @@
             };
 
             const { days, labelEvery } = config[range] || config.week;
-            const values = generateWaterUsageSeries(days);
-            const chart = document.getElementById("waterUsageChart");
+            const values = generateUsageSeries(days, usageType);
+            const chart = document.getElementById("usageChart");
+            const unit = usageType === "electricity" ? "kWh" : "L";
 
             const width = 920;
             const height = 520;
@@ -606,7 +642,7 @@
                 const yVal = yMin + ((yMax - yMin) * t) / 4;
                 const y = yScale(yVal);
                 ticks += `<line class="graph-tick" x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" />`;
-                ticks += `<text class="graph-label" x="8" y="${y + 4}">${Math.round(yVal)} L</text>`;
+                ticks += `<text class="graph-label" x="8" y="${y + 4}">${yVal.toFixed(usageType === "electricity" ? 1 : 0)} ${unit}</text>`;
             }
 
             const xLabels = [];
@@ -648,17 +684,17 @@
                 sendMessage();
             }
 
-            if (event.key === "Escape" && document.getElementById("waterUsageModal").classList.contains("open")) {
+            if (event.key === "Escape" && document.getElementById("usageModal").classList.contains("open")) {
                 closeWaterUsageGraph();
             }
         });
 
-        document.getElementById("waterUsageRange").addEventListener("change", (event) => {
-            drawWaterUsageChart(event.target.value);
+        document.getElementById("usageRange").addEventListener("change", (event) => {
+            drawUsageChart(event.target.value, activeUsageType);
         });
 
-        document.getElementById("waterUsageModal").addEventListener("click", (event) => {
-            if (event.target.id === "waterUsageModal") {
+        document.getElementById("usageModal").addEventListener("click", (event) => {
+            if (event.target.id === "usageModal") {
                 closeWaterUsageGraph();
             }
         });
