@@ -31,9 +31,9 @@ class SimulatedESPNetwork:
             "lock": "Locked",
         }
         self.metrics = {
-            "water_usage_gal": 412,
+            "water_usage_litres": 1560,
             "electricity_usage_kwh": 31.7,
-            "weather": "72°F · Clear",
+            "weather": "22°C · Clear",
         }
 
     def _wifi_ping_delay(self):
@@ -41,7 +41,7 @@ class SimulatedESPNetwork:
 
     def get_state(self):
         self._wifi_ping_delay()
-        self.metrics["water_usage_gal"] += random.choice([0, 1, 1, 2])
+        self.metrics["water_usage_litres"] += random.choice([1, 2, 3, 5])
         self.metrics["electricity_usage_kwh"] = round(
             self.metrics["electricity_usage_kwh"] + random.choice([0.0, 0.1, 0.2]),
             1,

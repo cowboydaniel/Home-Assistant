@@ -215,7 +215,7 @@
             <div class="control-grid">
                 <div class="metric-card">
                     <p class="metric-label">Water Usage</p>
-                    <p class="metric-value" id="waterUsage">-- gal</p>
+                    <p class="metric-value" id="waterUsage">-- L</p>
                 </div>
                 <div class="metric-card">
                     <p class="metric-label">Electricity Usage</p>
@@ -383,7 +383,7 @@
                     throw new Error(data.error || "Failed to load control state.");
                 }
 
-                document.getElementById("waterUsage").textContent = `${data.metrics.water_usage_gal} gal`;
+                document.getElementById("waterUsage").textContent = `${data.metrics.water_usage_litres} L`;
                 document.getElementById("electricityUsage").textContent = `${data.metrics.electricity_usage_kwh} kWh`;
                 document.getElementById("weatherInfo").textContent = data.metrics.weather;
 
