@@ -36,8 +36,8 @@ engine.setProperty("volume", 0.9)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
-TOOL_CALL_MAX_DEPTH = 2
-TOOL_CALL_TIMEOUT_SECONDS = 20
+TOOL_CALL_MAX_DEPTH = 6
+TOOL_CALL_TIMEOUT_SECONDS = 45
 CONFIRMATION_TTL_SECONDS = 45
 
 
@@ -295,6 +295,75 @@ def invoke_tool(tool_name, args=None):
     }
 
 
+
+
+def run_deterministic_batch_actions(user_input):
+    normalized_input = " ".join((user_input or "").strip().lower().split())
+    if not normalized_input:
+        return None
+
+    requested_reads = []
+    if "water usage" in normalized_input or "water" in normalized_input:
+        requested_reads.append("water")
+    if "electricity usage" in normalized_input or "electricity" in normalized_input:
+        requested_reads.append("electricity")
+
+    state_phrase = None
+    if "turn everything on" in normalized_input or "turn all on" in normalized_input:
+        state_phrase = "On"
+    elif "turn everything off" in normalized_input or "turn all off" in normalized_input:
+        state_phrase = "Off"
+
+    requested_device_updates = []
+    if state_phrase:
+        requested_device_updates.extend(
+            [
+                ("camera", state_phrase),
+                ("light", state_phrase),
+            ]
+        )
+
+    if (
+        not requested_reads
+        and not requested_device_updates
+        and "lock" not in normalized_input
+    ):
+        return None
+
+    summaries = []
+
+    if requested_reads:
+        state_result = invoke_tool("get_state")
+        if not state_result.get("ok"):
+            return "I couldn't read system usage right now."
+        metrics = state_result.get("payload", {}).get("metrics", {})
+        metric_chunks = []
+        if "water" in requested_reads:
+            metric_chunks.append(f"water usage is {metrics.get('water_usage_litres', '--')} L")
+        if "electricity" in requested_reads:
+            metric_chunks.append(f"electricity usage is {metrics.get('electricity_usage_kwh', '--')} kWh")
+        if metric_chunks:
+            summaries.append("I checked " + " and ".join(metric_chunks) + ".")
+
+    for device, state in requested_device_updates:
+        result = invoke_tool("set_device_state", {"device": device, "state": state})
+        if not result.get("ok"):
+            summaries.append(f"I couldn't set {device} to {state}.")
+            continue
+
+        payload = result.get("payload", {})
+        if payload.get("status") == "pending_confirmation":
+            summaries.append(
+                f"{device.capitalize()} change to {state} needs confirmation token {payload.get('confirmation_token')}."
+            )
+        else:
+            summaries.append(f"{device.capitalize()} is now {payload.get('state', state)}.")
+
+    if summaries:
+        return " ".join(summaries)
+
+    return None
+
 def build_prompt(user_input):
     return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
 You are direct, practical, and useful.
@@ -308,7 +377,9 @@ Assistant:"""
 def build_tool_or_answer_prompt(user_input, tool_history):
     tool_history_json = json.dumps(tool_history, indent=2)
     return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
-You can either answer directly or ask for one tool call.
+You can either answer directly or request exactly one tool call at a time.
+If the user asks for multiple actions, execute them one-by-one via repeated tool calls until all actions are complete, then provide a final answer.
+Never stop early when there are still requested actions left.
 Available tools:
 - get_state: takes no arguments.
 - set_device_state: args {{"device": "camera|light|lock", "state": "Off|On|Locked|Unlocked"}}
@@ -372,6 +443,10 @@ def get_response(prompt, model=OLLAMA_MODEL, temperature=0.7, max_tokens=500):
 
 
 def run_agent_flow(user_input):
+    deterministic_result = run_deterministic_batch_actions(user_input)
+    if deterministic_result:
+        return deterministic_result
+
     tool_history = []
     start_time = time.monotonic()
 
@@ -397,7 +472,7 @@ def run_agent_flow(user_input):
             return "I couldn't determine the next step."
 
         if len(tool_history) >= TOOL_CALL_MAX_DEPTH:
-            return "I hit the maximum tool-call depth. Please refine your request."
+            break
 
         tool_name = first_pass.get("tool_name")
         args = first_pass.get("args") if isinstance(first_pass.get("args"), dict) else {}
@@ -410,6 +485,7 @@ def run_agent_flow(user_input):
             }
         )
 
+    if tool_history:
         second_pass = get_response(
             build_final_answer_prompt(user_input, tool_history),
             temperature=0.2,

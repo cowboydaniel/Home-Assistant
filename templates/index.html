@@ -998,6 +998,25 @@
             }
         }
 
+        async function confirmDeviceStateChange(confirmationToken) {
+            const confirmResponse = await fetch("/control/confirm", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    confirmation_token: confirmationToken
+                })
+            });
+
+            const confirmData = await confirmResponse.json();
+            if (!confirmResponse.ok) {
+                throw new Error(confirmData.error || "Confirmation failed.");
+            }
+
+            return confirmData;
+        }
+
         async function setDeviceState(deviceType, state) {
             const statusMap = {
                 camera: "cameraStatus",
@@ -1024,6 +1043,29 @@
 
                 const payload = data?.payload || {};
                 const statusElement = document.getElementById(statusMap[deviceType]);
+
+                if (payload.status === "pending_confirmation" && payload.confirmation_token) {
+                    const shouldConfirm = window.confirm(
+                        `${payload.policy_reason || "This action requires confirmation."}
+
+Confirm now?`
+                    );
+
+                    if (!shouldConfirm) {
+                        if (statusElement) {
+                            statusElement.textContent = `Status: Pending confirmation (${payload.state || state})`;
+                        }
+                        return;
+                    }
+
+                    const confirmedResult = await confirmDeviceStateChange(payload.confirmation_token);
+                    const confirmedPayload = confirmedResult?.payload || {};
+                    if (statusElement) {
+                        statusElement.textContent = `Status: ${confirmedPayload.state || payload.state || state}`;
+                    }
+                    return;
+                }
+
                 if (statusElement) {
                     statusElement.textContent = `Status: ${payload.state || state}`;
                 }
