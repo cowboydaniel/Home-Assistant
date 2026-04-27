@@ -565,6 +565,80 @@
     </div>
 
     <script>
+        const CHAT_STORAGE_KEY = "homeassistant.chat.v1";
+        let chatTranscript = loadChatTranscript();
+        let activeAssistantMessageIndex = null;
+
+        function loadChatTranscript() {
+            const storedTranscript = localStorage.getItem(CHAT_STORAGE_KEY);
+            if (!storedTranscript) {
+                return [];
+            }
+
+            try {
+                const parsedTranscript = JSON.parse(storedTranscript);
+                if (!Array.isArray(parsedTranscript)) {
+                    throw new Error("Transcript is not an array.");
+                }
+
+                const normalizedTranscript = parsedTranscript.map((message) => {
+                    if (
+                        !message ||
+                        (message.role !== "user" && message.role !== "assistant") ||
+                        typeof message.content !== "string"
+                    ) {
+                        throw new Error("Transcript entry is invalid.");
+                    }
+
+                    return {
+                        role: message.role,
+                        content: message.content
+                    };
+                });
+
+                return normalizedTranscript;
+            } catch (error) {
+                console.warn("Invalid chat transcript in localStorage. Resetting.", error);
+                localStorage.removeItem(CHAT_STORAGE_KEY);
+                return [];
+            }
+        }
+
+        function saveChatTranscript() {
+            localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chatTranscript));
+        }
+
+        function renderChatTranscript() {
+            const responseBox = document.getElementById("responseBox");
+            responseBox.innerHTML = chatTranscript.map((message, index) => {
+                const speaker = message.role === "user" ? "You" : "Assistant";
+                const typingClass = index === activeAssistantMessageIndex ? " typing-cursor" : "";
+                return `<b>${speaker}:</b> <span class="chat-line${typingClass}">${escapeHtml(message.content)}</span><br><br>`;
+            }).join("");
+            responseBox.scrollTop = responseBox.scrollHeight;
+        }
+
+        function appendChatMessage(role, content = "") {
+            chatTranscript.push({ role, content });
+            renderChatTranscript();
+            saveChatTranscript();
+            return chatTranscript.length - 1;
+        }
+
+        function setChatMessageContent(index, content, isTyping = false) {
+            if (typeof index !== "number" || !chatTranscript[index]) {
+                return;
+            }
+
+            chatTranscript[index].content = content;
+            activeAssistantMessageIndex = isTyping ? index : null;
+            renderChatTranscript();
+            saveChatTranscript();
+        }
+
+        function hydrateChatFromStorage() {
+            activeAssistantMessageIndex = null;
+            renderChatTranscript();
 
 
         const MIN_LOADER_MS = 550;
@@ -635,7 +709,6 @@
         async function sendMessage() {
             const input = document.getElementById("userInput");
             const sendBtn = document.getElementById("sendBtn");
-            const responseBox = document.getElementById("responseBox");
 
             const userInput = input.value.trim();
             if (!userInput) return;
@@ -643,10 +716,10 @@
             sendBtn.disabled = true;
             input.value = "";
 
-            responseBox.innerHTML += `<b>You:</b> ${escapeHtml(userInput)}<br>`;
-            responseBox.innerHTML += `<b>Assistant:</b> <span id="currentResponse" class="typing-cursor"></span><br><br>`;
-
-            const currentResponse = document.getElementById("currentResponse");
+            appendChatMessage("user", userInput);
+            const assistantMessageIndex = appendChatMessage("assistant", "");
+            let assistantMessage = "";
+            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
 
             try {
                 const res = await fetch("/chat_stream", {
@@ -679,25 +752,26 @@
                         const data = JSON.parse(jsonText);
 
                         if (data.chunk) {
-                            currentResponse.textContent += data.chunk;
-                            responseBox.scrollTop = responseBox.scrollHeight;
+                            assistantMessage += data.chunk;
+                            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
                         }
 
                         if (data.error) {
-                            currentResponse.textContent += `[ERROR] ${data.error}`;
+                            assistantMessage += `[ERROR] ${data.error}`;
+                            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
                         }
 
                         if (data.done) {
-                            currentResponse.classList.remove("typing-cursor");
+                            setChatMessageContent(assistantMessageIndex, assistantMessage, false);
                         }
                     }
                 }
 
-                currentResponse.classList.remove("typing-cursor");
+                setChatMessageContent(assistantMessageIndex, assistantMessage, false);
 
             } catch (error) {
-                currentResponse.textContent += `[ERROR] ${error}`;
-                currentResponse.classList.remove("typing-cursor");
+                assistantMessage += `[ERROR] ${error}`;
+                setChatMessageContent(assistantMessageIndex, assistantMessage, false);
             }
 
             sendBtn.disabled = false;
@@ -705,8 +779,11 @@
         }
 
         function newChat() {
+            chatTranscript = [];
+            activeAssistantMessageIndex = null;
             document.getElementById("responseBox").innerHTML = "";
             document.getElementById("userInput").value = "";
+            localStorage.removeItem(CHAT_STORAGE_KEY);
         }
 
         async function restartService() {
@@ -980,6 +1057,8 @@
             return div.innerHTML;
         }
 
+        hydrateChatFromStorage();
+        fetchControlState();
         document.getElementById("appLoaderRetry").addEventListener("click", () => {
             runStartupSequence();
         });
