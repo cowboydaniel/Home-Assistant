@@ -976,14 +976,18 @@
                     throw new Error(data.error || "Failed to load control state.");
                 }
 
-                document.getElementById("waterUsage").textContent = `${data.metrics.water_usage_litres} L`;
-                document.getElementById("electricityUsage").textContent = `${data.metrics.electricity_usage_kwh} kWh`;
-                document.getElementById("weatherInfo").textContent = data.metrics.weather;
+                const payload = data?.payload || {};
+                const metrics = payload.metrics || {};
+                const devices = payload.devices || {};
 
-                document.getElementById("cameraStatus").textContent = `Status: ${data.devices.camera}`;
-                document.getElementById("lightStatus").textContent = `Status: ${data.devices.light}`;
-                document.getElementById("lockStatus").textContent = `Status: ${data.devices.lock}`;
-                return data;
+                document.getElementById("waterUsage").textContent = `${metrics.water_usage_litres ?? "--"} L`;
+                document.getElementById("electricityUsage").textContent = `${metrics.electricity_usage_kwh ?? "--"} kWh`;
+                document.getElementById("weatherInfo").textContent = metrics.weather || "Offline";
+
+                document.getElementById("cameraStatus").textContent = `Status: ${devices.camera || "--"}`;
+                document.getElementById("lightStatus").textContent = `Status: ${devices.light || "--"}`;
+                document.getElementById("lockStatus").textContent = `Status: ${devices.lock || "--"}`;
+                return payload;
             } catch (error) {
                 console.error("Control state error:", error);
                 document.getElementById("weatherInfo").textContent = "Offline";
@@ -1018,9 +1022,10 @@
                     throw new Error(data.error || "Failed to update device state.");
                 }
 
+                const payload = data?.payload || {};
                 const statusElement = document.getElementById(statusMap[deviceType]);
                 if (statusElement) {
-                    statusElement.textContent = `Status: ${data.state}`;
+                    statusElement.textContent = `Status: ${payload.state || state}`;
                 }
             } catch (error) {
                 alert(`Control update failed: ${error.message}`);
