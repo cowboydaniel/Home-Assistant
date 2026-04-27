@@ -37,7 +37,7 @@ engine.setProperty("volume", 0.9)
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
 TOOL_CALL_MAX_DEPTH = 6
-TOOL_CALL_TIMEOUT_SECONDS = 20
+TOOL_CALL_TIMEOUT_SECONDS = 45
 CONFIRMATION_TTL_SECONDS = 45
 
 
@@ -295,6 +295,75 @@ def invoke_tool(tool_name, args=None):
     }
 
 
+
+
+def run_deterministic_batch_actions(user_input):
+    normalized_input = " ".join((user_input or "").strip().lower().split())
+    if not normalized_input:
+        return None
+
+    requested_reads = []
+    if "water usage" in normalized_input or "water" in normalized_input:
+        requested_reads.append("water")
+    if "electricity usage" in normalized_input or "electricity" in normalized_input:
+        requested_reads.append("electricity")
+
+    state_phrase = None
+    if "turn everything on" in normalized_input or "turn all on" in normalized_input:
+        state_phrase = "On"
+    elif "turn everything off" in normalized_input or "turn all off" in normalized_input:
+        state_phrase = "Off"
+
+    requested_device_updates = []
+    if state_phrase:
+        requested_device_updates.extend(
+            [
+                ("camera", state_phrase),
+                ("light", state_phrase),
+            ]
+        )
+
+    if (
+        not requested_reads
+        and not requested_device_updates
+        and "lock" not in normalized_input
+    ):
+        return None
+
+    summaries = []
+
+    if requested_reads:
+        state_result = invoke_tool("get_state")
+        if not state_result.get("ok"):
+            return "I couldn't read system usage right now."
+        metrics = state_result.get("payload", {}).get("metrics", {})
+        metric_chunks = []
+        if "water" in requested_reads:
+            metric_chunks.append(f"water usage is {metrics.get('water_usage_litres', '--')} L")
+        if "electricity" in requested_reads:
+            metric_chunks.append(f"electricity usage is {metrics.get('electricity_usage_kwh', '--')} kWh")
+        if metric_chunks:
+            summaries.append("I checked " + " and ".join(metric_chunks) + ".")
+
+    for device, state in requested_device_updates:
+        result = invoke_tool("set_device_state", {"device": device, "state": state})
+        if not result.get("ok"):
+            summaries.append(f"I couldn't set {device} to {state}.")
+            continue
+
+        payload = result.get("payload", {})
+        if payload.get("status") == "pending_confirmation":
+            summaries.append(
+                f"{device.capitalize()} change to {state} needs confirmation token {payload.get('confirmation_token')}."
+            )
+        else:
+            summaries.append(f"{device.capitalize()} is now {payload.get('state', state)}.")
+
+    if summaries:
+        return " ".join(summaries)
+
+    return None
+
 def build_prompt(user_input):
     return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
 You are direct, practical, and useful.
@@ -374,6 +443,10 @@ def get_response(prompt, model=OLLAMA_MODEL, temperature=0.7, max_tokens=500):
 
 
 def run_agent_flow(user_input):
+    deterministic_result = run_deterministic_batch_actions(user_input)
+    if deterministic_result:
+        return deterministic_result
+
     tool_history = []
     start_time = time.monotonic()
 
