@@ -2,6 +2,7 @@ import json
 import os
 import random
 import signal
+import string
 import sys
 import time
 
@@ -37,6 +38,7 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
 TOOL_CALL_MAX_DEPTH = 2
 TOOL_CALL_TIMEOUT_SECONDS = 20
+CONFIRMATION_TTL_SECONDS = 45
 
 
 class SimulatedESPNetwork:
@@ -46,6 +48,7 @@ class SimulatedESPNetwork:
             "light": "Off",
             "lock": "Locked",
         }
+        self.pending_confirmations = {}
         self.metrics = {
             "water_usage_litres": 1560,
             "electricity_usage_kwh": 31.7,
@@ -81,6 +84,97 @@ class SimulatedESPNetwork:
             "state": state,
         }
 
+    def _generate_confirmation_token(self, length=6):
+        alphabet = string.ascii_uppercase + string.digits
+        return "".join(random.choice(alphabet) for _ in range(length))
+
+    def _cleanup_expired_confirmations(self):
+        now = time.monotonic()
+        expired_tokens = [
+            token
+            for token, entry in self.pending_confirmations.items()
+            if entry["expires_at_monotonic"] <= now
+        ]
+        for token in expired_tokens:
+            self.pending_confirmations.pop(token, None)
+
+    def _evaluate_transition_policy(self, device, current_state, requested_state):
+        if device == "lock" and current_state == "Locked" and requested_state == "Unlocked":
+            return {
+                "requires_confirmation": True,
+                "policy_reason": "Unlocking the door is a high-risk security transition.",
+            }
+
+        return {
+            "requires_confirmation": False,
+            "policy_reason": "No additional confirmation required by policy.",
+        }
+
+    def request_device_state_change(self, device, state):
+        if device not in self.device_states:
+            raise ValueError(f"Unknown device '{device}'.")
+
+        self._cleanup_expired_confirmations()
+        current_state = self.device_states[device]
+        policy = self._evaluate_transition_policy(device, current_state, state)
+
+        if policy["requires_confirmation"]:
+            token = self._generate_confirmation_token()
+            issued_monotonic = time.monotonic()
+            expires_monotonic = issued_monotonic + CONFIRMATION_TTL_SECONDS
+            issued_unix = int(time.time())
+            expires_unix = issued_unix + CONFIRMATION_TTL_SECONDS
+
+            self.pending_confirmations[token] = {
+                "device": device,
+                "state": state,
+                "issued_at_monotonic": issued_monotonic,
+                "expires_at_monotonic": expires_monotonic,
+                "issued_at_unix": issued_unix,
+                "expires_at_unix": expires_unix,
+                "policy_reason": policy["policy_reason"],
+            }
+
+            return {
+                "ok": True,
+                "source": "simulated-esp-over-wifi",
+                "status": "pending_confirmation",
+                "requires_confirmation": True,
+                "confirmation_token": token,
+                "confirmation_ttl_seconds": CONFIRMATION_TTL_SECONDS,
+                "expires_at_unix": expires_unix,
+                "device": device,
+                "state": state,
+                "policy_reason": policy["policy_reason"],
+            }
+
+        result = self.set_device_state(device, state)
+        result["status"] = "applied"
+        result["requires_confirmation"] = False
+        result["policy_reason"] = policy["policy_reason"]
+        return result
+
+    def confirm_device_state_change(self, token):
+        if not token:
+            raise ValueError("Confirmation token is required.")
+
+        self._cleanup_expired_confirmations()
+        pending = self.pending_confirmations.get(token)
+        if not pending:
+            return {
+                "ok": False,
+                "source": "simulated-esp-over-wifi",
+                "error": "invalid_or_expired_confirmation_token",
+                "status": "confirmation_rejected",
+            }
+
+        result = self.set_device_state(pending["device"], pending["state"])
+        self.pending_confirmations.pop(token, None)
+        result["status"] = "applied"
+        result["requires_confirmation"] = False
+        result["policy_reason"] = pending["policy_reason"]
+        return result
+
 
 esp_network = SimulatedESPNetwork()
 
@@ -95,6 +189,10 @@ TOOLS = {
             "device": ["camera", "light", "lock"],
             "state": ["Off", "On", "Locked", "Unlocked"],
         },
+    },
+    "confirm_device_state": {
+        "required_args": ["confirmation_token"],
+        "enum_args": {},
     },
 }
 
@@ -146,15 +244,40 @@ def invoke_tool(tool_name, args=None):
             }
 
         if tool_name == "set_device_state":
-            result = esp_network.set_device_state(args["device"], args["state"])
+            result = esp_network.request_device_state_change(args["device"], args["state"])
+            payload = {
+                "device": result.get("device"),
+                "state": result.get("state"),
+                "status": result.get("status", "applied"),
+                "requires_confirmation": bool(result.get("requires_confirmation", False)),
+                "policy_reason": result.get("policy_reason"),
+            }
+            if result.get("status") == "pending_confirmation":
+                payload["confirmation_token"] = result.get("confirmation_token")
+                payload["confirmation_ttl_seconds"] = result.get("confirmation_ttl_seconds")
+                payload["expires_at_unix"] = result.get("expires_at_unix")
             return {
                 "ok": bool(result.get("ok", True)),
                 "source": result.get("source", "unknown"),
+                "payload": payload,
+            }
+
+        if tool_name == "confirm_device_state":
+            result = esp_network.confirm_device_state_change(args["confirmation_token"])
+            response = {
+                "ok": bool(result.get("ok", False)),
+                "source": result.get("source", "unknown"),
                 "payload": {
+                    "status": result.get("status"),
                     "device": result.get("device"),
                     "state": result.get("state"),
+                    "requires_confirmation": bool(result.get("requires_confirmation", False)),
+                    "policy_reason": result.get("policy_reason"),
                 },
             }
+            if not response["ok"]:
+                response["error"] = result.get("error")
+            return response
     except ValueError as err:
         return {
             "ok": False,
@@ -189,6 +312,7 @@ You can either answer directly or ask for one tool call.
 Available tools:
 - get_state: takes no arguments.
 - set_device_state: args {{"device": "camera|light|lock", "state": "Off|On|Locked|Unlocked"}}
+- confirm_device_state: args {{"confirmation_token": "echo token from pending confirmation"}}
 
 Conversation user request:
 {user_input}
@@ -198,7 +322,7 @@ Tool history (JSON):
 
 Return ONLY valid JSON with one of these shapes:
 1) {{"type":"final_answer","answer":"concise plain text"}}
-2) {{"type":"tool_call","tool_name":"get_state|set_device_state","args":{{...}}}}
+2) {{"type":"tool_call","tool_name":"get_state|set_device_state|confirm_device_state","args":{{...}}}}
 
 Do not include markdown or extra keys.
 """
@@ -386,6 +510,17 @@ def control_state():
 def control_device():
     payload = request.get_json(silent=True) or {}
     result = invoke_tool("set_device_state", payload)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    if result.get("payload", {}).get("status") == "pending_confirmation":
+        return jsonify(result), 202
+    return jsonify(result)
+
+
+@app.route("/control/confirm", methods=["POST"])
+def control_confirm():
+    payload = request.get_json(silent=True) or {}
+    result = invoke_tool("confirm_device_state", payload)
     if not result.get("ok"):
         return jsonify(result), 400
     return jsonify(result)
