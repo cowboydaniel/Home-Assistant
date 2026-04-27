@@ -260,13 +260,201 @@
             font-size: 12px;
         }
 
+
+
+        #appLoader {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            text-align: center;
+            color: #eef4ff;
+            background: linear-gradient(130deg, #081022, #0d2347, #11446f, #146991);
+            background-size: 300% 300%;
+            animation: loaderGradientShift 9s ease infinite;
+            transition: opacity 280ms ease, visibility 280ms ease;
+        }
+
+        #appLoader.is-hiding {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .app-loader-content {
+            width: min(88vw, 420px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .app-loader-stage {
+            position: relative;
+            width: 146px;
+            height: 146px;
+            display: grid;
+            place-items: center;
+        }
+
+        .loader-ring,
+        .loader-ring::before {
+            position: absolute;
+            border-radius: 50%;
+            border: 2px solid transparent;
+        }
+
+        .loader-ring {
+            inset: 0;
+            border-top-color: rgba(255, 255, 255, 0.95);
+            border-right-color: rgba(132, 213, 255, 0.95);
+            animation: ringSpin 1.25s linear infinite;
+        }
+
+        .loader-ring::before {
+            content: "";
+            inset: 14px;
+            border-left-color: rgba(95, 246, 255, 0.92);
+            border-bottom-color: rgba(255, 255, 255, 0.72);
+            animation: ringSpinReverse 1.8s linear infinite;
+        }
+
+        .loader-core {
+            width: 76px;
+            height: 76px;
+            border-radius: 22px;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            letter-spacing: 1.3px;
+            font-size: 13px;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.38);
+            box-shadow: 0 0 22px rgba(98, 210, 255, 0.45);
+            backdrop-filter: blur(4px);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .loader-core::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(110deg, transparent 28%, rgba(255, 255, 255, 0.35) 48%, transparent 70%);
+            transform: translateX(-130%);
+            animation: loaderShimmer 1.9s ease-in-out infinite;
+        }
+
+        .loader-particle {
+            position: absolute;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: rgba(207, 245, 255, 0.95);
+            box-shadow: 0 0 14px rgba(207, 245, 255, 0.9);
+            animation: particleOrbit 2.2s linear infinite;
+        }
+
+        .loader-particle:nth-child(2) {
+            animation-delay: -0.74s;
+        }
+
+        .loader-particle:nth-child(3) {
+            animation-delay: -1.45s;
+        }
+
+        .loader-text {
+            margin: 0;
+            font-size: 16px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        .loader-hint {
+            margin: 0;
+            min-height: 24px;
+            color: rgba(235, 249, 255, 0.92);
+        }
+
+        .loader-retry {
+            display: none;
+            margin-top: 4px;
+            min-width: 112px;
+        }
+
+        #appLoader.has-error .loader-retry {
+            display: inline-block;
+        }
+
+        @keyframes loaderGradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        @keyframes ringSpin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes ringSpinReverse {
+            0% { transform: rotate(360deg); }
+            100% { transform: rotate(0deg); }
+        }
+
+        @keyframes loaderShimmer {
+            0% { transform: translateX(-130%); }
+            100% { transform: translateX(135%); }
+        }
+
+        @keyframes particleOrbit {
+            0% {
+                transform: rotate(0deg) translateX(58px) rotate(0deg);
+                opacity: 0.9;
+            }
+            50% {
+                opacity: 0.4;
+            }
+            100% {
+                transform: rotate(360deg) translateX(58px) rotate(-360deg);
+                opacity: 0.9;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            #appLoader,
+            .loader-ring,
+            .loader-ring::before,
+            .loader-core::after,
+            .loader-particle {
+                animation: none !important;
+            }
+        }
+
         @keyframes blink {
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0; }
         }
     </style>
 </head>
+
 <body class="dark-mode">
+    <div id="appLoader" role="status" aria-live="polite" aria-hidden="false">
+        <div class="app-loader-content">
+            <div class="app-loader-stage" aria-hidden="true">
+                <span class="loader-particle"></span>
+                <span class="loader-particle"></span>
+                <span class="loader-particle"></span>
+                <div class="loader-ring"></div>
+                <div class="loader-core">HA</div>
+            </div>
+            <p class="loader-text" id="appLoaderMessage">Loading HomeAssistant…</p>
+            <p class="loader-hint" id="appLoaderHint">Preparing your control panel.</p>
+            <button class="loader-retry" id="appLoaderRetry" type="button">Retry</button>
+        </div>
+    </div>
     <header>
         <h1>HomeAssistant</h1>
         <button class="toggle-btn" id="toggleBtn">Switch to Light Mode</button>
@@ -377,6 +565,73 @@
     </div>
 
     <script>
+
+
+        const MIN_LOADER_MS = 550;
+
+        function getLoaderElements() {
+            return {
+                loader: document.getElementById("appLoader"),
+                hint: document.getElementById("appLoaderHint"),
+                retryBtn: document.getElementById("appLoaderRetry")
+            };
+        }
+
+        function setLoaderErrorState(message) {
+            const { loader, hint } = getLoaderElements();
+            if (!loader || !hint) return;
+            loader.classList.add("has-error");
+            loader.classList.remove("is-hiding");
+            loader.style.display = "grid";
+            loader.setAttribute("aria-hidden", "false");
+            hint.textContent = message || "Could not load startup data.";
+        }
+
+        function hideLoader() {
+            const { loader } = getLoaderElements();
+            if (!loader) return;
+            const completeHide = () => {
+                loader.style.display = "none";
+                loader.setAttribute("aria-hidden", "true");
+            };
+
+            loader.classList.remove("has-error");
+            loader.classList.add("is-hiding");
+            loader.addEventListener("transitionend", () => completeHide(), { once: true });
+            window.setTimeout(() => {
+                if (loader.classList.contains("is-hiding")) completeHide();
+            }, 340);
+        }
+
+        async function runStartupSequence() {
+            const { loader, hint } = getLoaderElements();
+            if (!loader) {
+                await fetchControlState();
+                return;
+            }
+
+            loader.style.display = "grid";
+            loader.classList.remove("is-hiding", "has-error");
+            loader.setAttribute("aria-hidden", "false");
+            if (hint) {
+                hint.textContent = "Preparing your control panel.";
+            }
+
+            const startTime = performance.now();
+            try {
+                await fetchControlState({ throwOnError: true });
+                const elapsed = performance.now() - startTime;
+                const waitMs = Math.max(0, MIN_LOADER_MS - elapsed);
+                if (waitMs) {
+                    await new Promise((resolve) => setTimeout(resolve, waitMs));
+                }
+                hideLoader();
+            } catch (error) {
+                console.error("Startup sequence failed:", error);
+                setLoaderErrorState("Unable to load HomeAssistant. Check your connection and retry.");
+            }
+        }
+
         async function sendMessage() {
             const input = document.getElementById("userInput");
             const sendBtn = document.getElementById("sendBtn");
@@ -492,7 +747,8 @@
             }
         }
 
-        async function fetchControlState() {
+        async function fetchControlState(options = {}) {
+            const { throwOnError = false } = options;
             try {
                 const res = await fetch("/control/state");
                 const data = await res.json();
@@ -508,9 +764,14 @@
                 document.getElementById("cameraStatus").textContent = `Status: ${data.devices.camera}`;
                 document.getElementById("lightStatus").textContent = `Status: ${data.devices.light}`;
                 document.getElementById("lockStatus").textContent = `Status: ${data.devices.lock}`;
+                return data;
             } catch (error) {
                 console.error("Control state error:", error);
                 document.getElementById("weatherInfo").textContent = "Offline";
+                if (throwOnError) {
+                    throw error;
+                }
+                return null;
             }
         }
 
@@ -719,7 +980,11 @@
             return div.innerHTML;
         }
 
-        fetchControlState();
+        document.getElementById("appLoaderRetry").addEventListener("click", () => {
+            runStartupSequence();
+        });
+
+        runStartupSequence();
     </script>
 </body>
 </html>
