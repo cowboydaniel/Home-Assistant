@@ -12,7 +12,8 @@ from flask import Flask, Response, jsonify, render_template, request, stream_wit
 from flask_cors import cross_origin
 
 # Initialize Flask App
-app = Flask(__name__, template_folder=".")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, "templates"))
 
 # Initialize Text-to-Speech Engine
 engine = pyttsx3.init()
