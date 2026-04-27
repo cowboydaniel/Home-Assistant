@@ -1,16 +1,18 @@
 import json
-import requests
-import pyttsx3
-import speech_recognition as sr
-from flask import Flask, request, jsonify, render_template, Response, stream_with_context
-from flask_cors import cross_origin
 import os
+import random
+import signal
 import sys
 import time
-import signal
+
+import pyttsx3
+import requests
+import speech_recognition as sr
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from flask_cors import cross_origin
 
 # Initialize Flask App
-app = Flask(__name__, template_folder="templates", static_folder="static")
+app = Flask(__name__, template_folder=".")
 
 # Initialize Text-to-Speech Engine
 engine = pyttsx3.init()
@@ -19,6 +21,52 @@ engine.setProperty("volume", 0.9)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
+
+
+class SimulatedESPNetwork:
+    def __init__(self):
+        self.device_states = {
+            "camera": "Off",
+            "light": "Off",
+            "lock": "Locked",
+        }
+        self.metrics = {
+            "water_usage_litres": 1560,
+            "electricity_usage_kwh": 31.7,
+            "weather": "22°C · Clear",
+        }
+
+    def _wifi_ping_delay(self):
+        time.sleep(0.12)
+
+    def get_state(self):
+        self._wifi_ping_delay()
+        self.metrics["water_usage_litres"] += random.choice([1, 2, 3, 5])
+        self.metrics["electricity_usage_kwh"] = round(
+            self.metrics["electricity_usage_kwh"] + random.choice([0.0, 0.1, 0.2]),
+            1,
+        )
+        return {
+            "source": "simulated-esp-over-wifi",
+            "metrics": self.metrics,
+            "devices": self.device_states,
+        }
+
+    def set_device_state(self, device, state):
+        if device not in self.device_states:
+            raise ValueError(f"Unknown device '{device}'.")
+
+        self._wifi_ping_delay()
+        self.device_states[device] = state
+        return {
+            "ok": True,
+            "source": "simulated-esp-over-wifi",
+            "device": device,
+            "state": state,
+        }
+
+
+esp_network = SimulatedESPNetwork()
 
 
 def build_prompt(user_input):
@@ -160,6 +208,27 @@ def restart():
         return jsonify({"message": f"Failed to restart. Error: {str(e)}"}), 500
 
     return jsonify({"message": "Service restarted successfully!"})
+
+
+@app.route("/control/state", methods=["GET"])
+def control_state():
+    return jsonify(esp_network.get_state())
+
+
+@app.route("/control/device", methods=["POST"])
+def control_device():
+    payload = request.get_json(silent=True) or {}
+    device = payload.get("device")
+    state = payload.get("state")
+
+    if not device or not state:
+        return jsonify({"error": "Both 'device' and 'state' are required."}), 400
+
+    try:
+        result = esp_network.set_device_state(device, state)
+        return jsonify(result)
+    except ValueError as err:
+        return jsonify({"error": str(err)}), 400
 
 
 if __name__ == "__main__":
