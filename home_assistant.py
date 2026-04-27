@@ -36,7 +36,7 @@ engine.setProperty("volume", 0.9)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
-TOOL_CALL_MAX_DEPTH = 2
+TOOL_CALL_MAX_DEPTH = 6
 TOOL_CALL_TIMEOUT_SECONDS = 20
 CONFIRMATION_TTL_SECONDS = 45
 
@@ -308,7 +308,9 @@ Assistant:"""
 def build_tool_or_answer_prompt(user_input, tool_history):
     tool_history_json = json.dumps(tool_history, indent=2)
     return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
-You can either answer directly or ask for one tool call.
+You can either answer directly or request exactly one tool call at a time.
+If the user asks for multiple actions, execute them one-by-one via repeated tool calls until all actions are complete, then provide a final answer.
+Never stop early when there are still requested actions left.
 Available tools:
 - get_state: takes no arguments.
 - set_device_state: args {{"device": "camera|light|lock", "state": "Off|On|Locked|Unlocked"}}
@@ -397,7 +399,7 @@ def run_agent_flow(user_input):
             return "I couldn't determine the next step."
 
         if len(tool_history) >= TOOL_CALL_MAX_DEPTH:
-            return "I hit the maximum tool-call depth. Please refine your request."
+            break
 
         tool_name = first_pass.get("tool_name")
         args = first_pass.get("args") if isinstance(first_pass.get("args"), dict) else {}
@@ -410,6 +412,7 @@ def run_agent_flow(user_input):
             }
         )
 
+    if tool_history:
         second_pass = get_response(
             build_final_answer_prompt(user_input, tool_history),
             temperature=0.2,
