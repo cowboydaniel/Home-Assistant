@@ -632,19 +632,23 @@
             }
         }
 
-        function resetChunkWatchdog(currentResponse, responseBox) {
+        function resetChunkWatchdog(onTimeout) {
             clearChunkWatchdog();
             chunkWatchdog = setTimeout(() => {
                 timeoutMessageShown = true;
                 setConnectionIndicator("error", "Error: waiting for stream...");
-                currentResponse.textContent += " [No response yet — still waiting on stream.]";
-                responseBox.scrollTop = responseBox.scrollHeight;
+                if (typeof onTimeout === "function") {
+                    onTimeout();
+                }
             }, CHUNK_TIMEOUT_MS);
         }
 
         function stopStreamingResponse() {
             if (activeStreamController) {
                 activeStreamController.abort();
+            }
+        }
+
         const CHAT_STORAGE_KEY = "homeassistant.chat.v1";
         let chatTranscript = loadChatTranscript();
         let activeAssistantMessageIndex = null;
@@ -719,7 +723,7 @@
         function hydrateChatFromStorage() {
             activeAssistantMessageIndex = null;
             renderChatTranscript();
-
+        }
 
         const MIN_LOADER_MS = 550;
 
@@ -797,11 +801,10 @@
             setConnectionIndicator("streaming", "Streaming");
             input.value = "";
             timeoutMessageShown = false;
-
-            responseBox.innerHTML += `<b>You:</b> ${escapeHtml(userInput)}<br>`;
-            responseBox.innerHTML += `<b>Assistant:</b> <span id="currentResponse" class="typing-cursor"></span><br><br>`;
-
-            const currentResponse = document.getElementById("currentResponse");
+            appendChatMessage("user", userInput);
+            const assistantMessageIndex = appendChatMessage("assistant", "");
+            let assistantMessage = "";
+            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
             let hasStreamError = false;
             let hasReceivedChunk = false;
             activeStreamController = new AbortController();
@@ -836,14 +839,22 @@
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder("utf-8");
                 let buffer = "";
-                resetChunkWatchdog(currentResponse, responseBox);
+                resetChunkWatchdog(() => {
+                    assistantMessage += " [No response yet — still waiting on stream.]";
+                    setChatMessageContent(assistantMessageIndex, assistantMessage, true);
+                    responseBox.scrollTop = responseBox.scrollHeight;
+                });
 
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
 
                     hasReceivedChunk = true;
-                    resetChunkWatchdog(currentResponse, responseBox);
+                    resetChunkWatchdog(() => {
+                        assistantMessage += " [No response yet — still waiting on stream.]";
+                        setChatMessageContent(assistantMessageIndex, assistantMessage, true);
+                        responseBox.scrollTop = responseBox.scrollHeight;
+                    });
 
                     buffer += decoder.decode(value, { stream: true });
 
@@ -865,8 +876,8 @@
                         }
 
                         if (data.chunk) {
-                            currentResponse.textContent += data.chunk;
-                            responseBox.scrollTop = responseBox.scrollHeight;
+                            assistantMessage += data.chunk;
+                            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
                             if (timeoutMessageShown) {
                                 timeoutMessageShown = false;
                                 setConnectionIndicator("streaming", "Streaming");
@@ -876,7 +887,8 @@
                         if (data.error) {
                             hasStreamError = true;
                             setConnectionIndicator("error", "Error");
-                            currentResponse.textContent += `[ERROR] ${data.error}`;
+                            assistantMessage += `[ERROR] ${data.error}`;
+                            setChatMessageContent(assistantMessageIndex, assistantMessage, true);
                         }
 
                         if (data.done) {
@@ -885,21 +897,21 @@
                     }
                 }
 
-                currentResponse.classList.remove("typing-cursor");
+                setChatMessageContent(assistantMessageIndex, assistantMessage, false);
                 if (!hasStreamError) {
                     setConnectionIndicator("idle", hasReceivedChunk ? "Idle" : "Idle (no chunks)");
                 }
 
             } catch (error) {
                 if (error.name === "AbortError") {
-                    currentResponse.textContent += "[Stopped by user]";
+                    assistantMessage += "[Stopped by user]";
                     setConnectionIndicator("idle", "Idle (stopped)");
                 } else {
                     hasStreamError = true;
-                    currentResponse.textContent += `[ERROR] ${error.message || error}`;
+                    assistantMessage += `[ERROR] ${error.message || error}`;
                     setConnectionIndicator("error", "Error");
                 }
-                currentResponse.classList.remove("typing-cursor");
+                setChatMessageContent(assistantMessageIndex, assistantMessage, false);
             } finally {
                 clearChunkWatchdog();
                 activeStreamController = null;
