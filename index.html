@@ -12,6 +12,8 @@
             --button-bg-color: #0078d4;
             --button-hover-bg-color: #005cb2;
             --response-bg-color: #e0e0e0;
+            --panel-bg-color: #ffffff;
+            --muted-text-color: #606060;
         }
 
         body.dark-mode {
@@ -21,6 +23,8 @@
             --button-bg-color: #6200ea;
             --button-hover-bg-color: #3700b3;
             --response-bg-color: #333333;
+            --panel-bg-color: #1f1f1f;
+            --muted-text-color: #bdbdbd;
         }
 
         body {
@@ -40,10 +44,39 @@
         }
 
         .container {
-            max-width: 600px;
+            max-width: 800px;
             margin: 0 auto;
             padding: 20px;
             text-align: left;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .tab-btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--button-bg-color);
+            background-color: transparent;
+            color: var(--text-color);
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .tab-btn.active {
+            background-color: var(--button-bg-color);
+            color: #fff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
         }
 
         input[type="text"] {
@@ -61,6 +94,7 @@
             border: none;
             cursor: pointer;
             width: auto;
+            border-radius: 6px;
         }
 
         button:hover {
@@ -98,6 +132,46 @@
             animation: blink 1s infinite;
         }
 
+        .control-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .metric-card,
+        .control-card {
+            background: var(--panel-bg-color);
+            border: 1px solid rgba(127, 127, 127, 0.25);
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .metric-label,
+        .control-title {
+            margin: 0 0 6px;
+            font-size: 14px;
+            color: var(--muted-text-color);
+        }
+
+        .metric-value {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        .control-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .status-text {
+            margin-top: 8px;
+            font-size: 13px;
+            color: var(--muted-text-color);
+        }
+
         @keyframes blink {
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0; }
@@ -111,22 +185,77 @@
     </header>
 
     <div class="container">
-        <h2>Chat with Assistant</h2>
-
-        <input id="userInput" type="text" placeholder="Type your question here..." />
-
-        <button id="sendBtn" onclick="sendMessage()">Send</button>
-        <button onclick="newChat()">New Chat</button>
-
-        <div class="action-buttons">
-            <button onclick="restartService()">Restart Service</button>
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="chatTab" onclick="switchTab('chatTab')">Chat</button>
+            <button class="tab-btn" data-tab="controlTab" onclick="switchTab('controlTab')">Control</button>
         </div>
 
-        <div class="response" id="responseBox"></div>
+        <section id="chatTab" class="tab-content active">
+            <h2>Chat with Assistant</h2>
 
-        <div id="notification" style="display:none; background-color: #f39c12; padding: 10px; color: white; margin-top: 10px;">
-            Service restarted successfully!
-        </div>
+            <input id="userInput" type="text" placeholder="Type your question here..." />
+
+            <button id="sendBtn" onclick="sendMessage()">Send</button>
+            <button onclick="newChat()">New Chat</button>
+
+            <div class="action-buttons">
+                <button onclick="restartService()">Restart Service</button>
+            </div>
+
+            <div class="response" id="responseBox"></div>
+
+            <div id="notification" style="display:none; background-color: #f39c12; padding: 10px; color: white; margin-top: 10px;">
+                Service restarted successfully!
+            </div>
+        </section>
+
+        <section id="controlTab" class="tab-content">
+            <h2>Control Panel</h2>
+
+            <div class="control-grid">
+                <div class="metric-card">
+                    <p class="metric-label">Water Usage</p>
+                    <p class="metric-value" id="waterUsage">-- gal</p>
+                </div>
+                <div class="metric-card">
+                    <p class="metric-label">Electricity Usage</p>
+                    <p class="metric-value" id="electricityUsage">-- kWh</p>
+                </div>
+                <div class="metric-card">
+                    <p class="metric-label">Weather</p>
+                    <p class="metric-value" id="weatherInfo">Loading...</p>
+                </div>
+            </div>
+
+            <div class="control-grid">
+                <div class="control-card">
+                    <p class="control-title">Cameras</p>
+                    <div class="control-actions">
+                        <button onclick="setDeviceState('camera', 'On')">Turn On</button>
+                        <button onclick="setDeviceState('camera', 'Off')">Turn Off</button>
+                    </div>
+                    <div class="status-text" id="cameraStatus">Status: --</div>
+                </div>
+
+                <div class="control-card">
+                    <p class="control-title">Lights</p>
+                    <div class="control-actions">
+                        <button onclick="setDeviceState('light', 'On')">Turn On</button>
+                        <button onclick="setDeviceState('light', 'Off')">Turn Off</button>
+                    </div>
+                    <div class="status-text" id="lightStatus">Status: --</div>
+                </div>
+
+                <div class="control-card">
+                    <p class="control-title">Locks</p>
+                    <div class="control-actions">
+                        <button onclick="setDeviceState('lock', 'Locked')">Lock</button>
+                        <button onclick="setDeviceState('lock', 'Unlocked')">Unlock</button>
+                    </div>
+                    <div class="status-text" id="lockStatus">Status: --</div>
+                </div>
+            </div>
+        </section>
     </div>
 
     <script>
@@ -228,8 +357,80 @@
             }
         }
 
+        function switchTab(tabId) {
+            document.querySelectorAll(".tab-content").forEach((tab) => {
+                tab.classList.remove("active");
+            });
+
+            document.querySelectorAll(".tab-btn").forEach((tabBtn) => {
+                tabBtn.classList.remove("active");
+            });
+
+            document.getElementById(tabId).classList.add("active");
+            document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add("active");
+
+            if (tabId === "controlTab") {
+                fetchControlState();
+            }
+        }
+
+        async function fetchControlState() {
+            try {
+                const res = await fetch("/control/state");
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || "Failed to load control state.");
+                }
+
+                document.getElementById("waterUsage").textContent = `${data.metrics.water_usage_gal} gal`;
+                document.getElementById("electricityUsage").textContent = `${data.metrics.electricity_usage_kwh} kWh`;
+                document.getElementById("weatherInfo").textContent = data.metrics.weather;
+
+                document.getElementById("cameraStatus").textContent = `Status: ${data.devices.camera}`;
+                document.getElementById("lightStatus").textContent = `Status: ${data.devices.light}`;
+                document.getElementById("lockStatus").textContent = `Status: ${data.devices.lock}`;
+            } catch (error) {
+                console.error("Control state error:", error);
+                document.getElementById("weatherInfo").textContent = "Offline";
+            }
+        }
+
+        async function setDeviceState(deviceType, state) {
+            const statusMap = {
+                camera: "cameraStatus",
+                light: "lightStatus",
+                lock: "lockStatus"
+            };
+
+            try {
+                const res = await fetch("/control/device", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        device: deviceType,
+                        state
+                    })
+                });
+
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.error || "Failed to update device state.");
+                }
+
+                const statusElement = document.getElementById(statusMap[deviceType]);
+                if (statusElement) {
+                    statusElement.textContent = `Status: ${data.state}`;
+                }
+            } catch (error) {
+                alert(`Control update failed: ${error.message}`);
+            }
+        }
+
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
+            if (event.key === "Enter" && document.getElementById("chatTab").classList.contains("active")) {
                 event.preventDefault();
                 sendMessage();
             }
@@ -253,6 +454,8 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        fetchControlState();
     </script>
 </body>
 </html>
