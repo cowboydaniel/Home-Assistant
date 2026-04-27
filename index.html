@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HomeAssistant</title>
+    <style>
+        :root {
+            --bg-color: #f4f4f9;
+            --text-color: #333;
+            --header-bg-color: #0078d4;
+            --button-bg-color: #0078d4;
+            --button-hover-bg-color: #005cb2;
+            --response-bg-color: #e0e0e0;
+        }
+
+        body.dark-mode {
+            --bg-color: #121212;
+            --text-color: #f4f4f9;
+            --header-bg-color: #1f1f1f;
+            --button-bg-color: #6200ea;
+            --button-hover-bg-color: #3700b3;
+            --response-bg-color: #333333;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            text-align: center;
+        }
+
+        header {
+            background-color: var(--header-bg-color);
+            color: white;
+            padding: 10px 0;
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: left;
+        }
+
+        input[type="text"] {
+            padding: 10px;
+            margin: 10px 0;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 10px;
+            margin: 10px 0;
+            background-color: var(--button-bg-color);
+            color: white;
+            border: none;
+            cursor: pointer;
+            width: auto;
+        }
+
+        button:hover {
+            background-color: var(--button-hover-bg-color);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .response {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: var(--response-bg-color);
+            border-radius: 5px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+
+        .toggle-btn {
+            background-color: transparent;
+            border: none;
+            color: white;
+            font-size: 18px;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            cursor: pointer;
+        }
+
+        .typing-cursor::after {
+            content: "▋";
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+    </style>
+</head>
+<body class="dark-mode">
+    <header>
+        <h1>HomeAssistant</h1>
+        <button class="toggle-btn" id="toggleBtn">Switch to Light Mode</button>
+    </header>
+
+    <div class="container">
+        <h2>Chat with Assistant</h2>
+
+        <input id="userInput" type="text" placeholder="Type your question here..." />
+
+        <button id="sendBtn" onclick="sendMessage()">Send</button>
+        <button onclick="newChat()">New Chat</button>
+
+        <div class="action-buttons">
+            <button onclick="restartService()">Restart Service</button>
+        </div>
+
+        <div class="response" id="responseBox"></div>
+
+        <div id="notification" style="display:none; background-color: #f39c12; padding: 10px; color: white; margin-top: 10px;">
+            Service restarted successfully!
+        </div>
+    </div>
+
+    <script>
+        async function sendMessage() {
+            const input = document.getElementById("userInput");
+            const sendBtn = document.getElementById("sendBtn");
+            const responseBox = document.getElementById("responseBox");
+
+            const userInput = input.value.trim();
+            if (!userInput) return;
+
+            sendBtn.disabled = true;
+            input.value = "";
+
+            responseBox.innerHTML += `<b>You:</b> ${escapeHtml(userInput)}<br>`;
+            responseBox.innerHTML += `<b>Assistant:</b> <span id="currentResponse" class="typing-cursor"></span><br><br>`;
+
+            const currentResponse = document.getElementById("currentResponse");
+
+            try {
+                const res = await fetch("/chat_stream", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ input: userInput })
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    const events = buffer.split("\n\n");
+                    buffer = events.pop();
+
+                    for (const event of events) {
+                        if (!event.startsWith("data: ")) continue;
+
+                        const jsonText = event.replace("data: ", "").trim();
+                        if (!jsonText) continue;
+
+                        const data = JSON.parse(jsonText);
+
+                        if (data.chunk) {
+                            currentResponse.textContent += data.chunk;
+                            responseBox.scrollTop = responseBox.scrollHeight;
+                        }
+
+                        if (data.error) {
+                            currentResponse.textContent += `[ERROR] ${data.error}`;
+                        }
+
+                        if (data.done) {
+                            currentResponse.classList.remove("typing-cursor");
+                        }
+                    }
+                }
+
+                currentResponse.classList.remove("typing-cursor");
+
+            } catch (error) {
+                currentResponse.textContent += `[ERROR] ${error}`;
+                currentResponse.classList.remove("typing-cursor");
+            }
+
+            sendBtn.disabled = false;
+            input.focus();
+        }
+
+        function newChat() {
+            document.getElementById("responseBox").innerHTML = "";
+            document.getElementById("userInput").value = "";
+        }
+
+        async function restartService() {
+            try {
+                const res = await fetch("/restart", {
+                    method: "POST"
+                });
+
+                const data = await res.json();
+                alert(data.message || "Restart requested.");
+
+                const notification = document.getElementById("notification");
+                notification.style.display = "block";
+
+                setTimeout(() => {
+                    notification.style.display = "none";
+                }, 3000);
+
+            } catch (error) {
+                alert("Error restarting service: " + error);
+            }
+        }
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                sendMessage();
+            }
+        });
+
+        const toggleBtn = document.getElementById("toggleBtn");
+        const body = document.body;
+
+        toggleBtn.addEventListener("click", () => {
+            body.classList.toggle("dark-mode");
+
+            if (body.classList.contains("dark-mode")) {
+                toggleBtn.textContent = "Switch to Light Mode";
+            } else {
+                toggleBtn.textContent = "Switch to Dark Mode";
+            }
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
