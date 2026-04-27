@@ -183,6 +183,45 @@
             color: var(--muted-text-color);
         }
 
+        .chat-toolbar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .connection-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            border: 1px solid rgba(127, 127, 127, 0.35);
+            color: var(--muted-text-color);
+        }
+
+        .connection-indicator::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #8a8a8a;
+        }
+
+        .connection-indicator.state-streaming::before {
+            background: #2ecc71;
+        }
+
+        .connection-indicator.state-idle::before {
+            background: #8a8a8a;
+        }
+
+        .connection-indicator.state-error::before {
+            background: #e74c3c;
+        }
+
         .graph-modal {
             position: fixed;
             inset: 0;
@@ -283,7 +322,11 @@
 
             <input id="userInput" type="text" placeholder="Type your question here..." />
 
-            <button id="sendBtn" onclick="sendMessage()">Send</button>
+            <div class="chat-toolbar">
+                <button id="sendBtn" onclick="sendMessage()">Send</button>
+                <button id="stopBtn" onclick="stopStreamingResponse()" disabled>Stop</button>
+                <span id="connectionIndicator" class="connection-indicator state-idle">Idle</span>
+            </div>
             <button onclick="newChat()">New Chat</button>
 
             <div class="action-buttons">
@@ -377,21 +420,65 @@
     </div>
 
     <script>
+        const CHUNK_TIMEOUT_MS = 10000;
+        let activeStreamController = null;
+        let chunkWatchdog = null;
+        let timeoutMessageShown = false;
+
+        function setConnectionIndicator(state, text) {
+            const indicator = document.getElementById("connectionIndicator");
+            indicator.classList.remove("state-streaming", "state-idle", "state-error");
+            indicator.classList.add(`state-${state}`);
+            indicator.textContent = text;
+        }
+
+        function setChatRequestState(isActive) {
+            document.getElementById("sendBtn").disabled = isActive;
+            document.getElementById("stopBtn").disabled = !isActive;
+        }
+
+        function clearChunkWatchdog() {
+            if (chunkWatchdog) {
+                clearTimeout(chunkWatchdog);
+                chunkWatchdog = null;
+            }
+        }
+
+        function resetChunkWatchdog(currentResponse, responseBox) {
+            clearChunkWatchdog();
+            chunkWatchdog = setTimeout(() => {
+                timeoutMessageShown = true;
+                setConnectionIndicator("error", "Error: waiting for stream...");
+                currentResponse.textContent += " [No response yet — still waiting on stream.]";
+                responseBox.scrollTop = responseBox.scrollHeight;
+            }, CHUNK_TIMEOUT_MS);
+        }
+
+        function stopStreamingResponse() {
+            if (activeStreamController) {
+                activeStreamController.abort();
+            }
+        }
+
         async function sendMessage() {
             const input = document.getElementById("userInput");
-            const sendBtn = document.getElementById("sendBtn");
             const responseBox = document.getElementById("responseBox");
 
             const userInput = input.value.trim();
             if (!userInput) return;
 
-            sendBtn.disabled = true;
+            setChatRequestState(true);
+            setConnectionIndicator("streaming", "Streaming");
             input.value = "";
+            timeoutMessageShown = false;
 
             responseBox.innerHTML += `<b>You:</b> ${escapeHtml(userInput)}<br>`;
             responseBox.innerHTML += `<b>Assistant:</b> <span id="currentResponse" class="typing-cursor"></span><br><br>`;
 
             const currentResponse = document.getElementById("currentResponse");
+            let hasStreamError = false;
+            let hasReceivedChunk = false;
+            activeStreamController = new AbortController();
 
             try {
                 const res = await fetch("/chat_stream", {
@@ -399,16 +486,38 @@
                     headers: {
                         "Content-Type": "application/json"
                     },
-                    body: JSON.stringify({ input: userInput })
+                    body: JSON.stringify({ input: userInput }),
+                    signal: activeStreamController.signal
                 });
+
+                if (!res.ok) {
+                    let errorMessage = `Request failed (${res.status})`;
+                    try {
+                        const errorPayload = await res.json();
+                        if (errorPayload?.error) {
+                            errorMessage = errorPayload.error;
+                        }
+                    } catch (jsonError) {
+                        console.warn("Unable to parse /chat_stream error payload.", jsonError);
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                if (!res.body) {
+                    throw new Error("Streaming response body unavailable.");
+                }
 
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder("utf-8");
                 let buffer = "";
+                resetChunkWatchdog(currentResponse, responseBox);
 
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
+
+                    hasReceivedChunk = true;
+                    resetChunkWatchdog(currentResponse, responseBox);
 
                     buffer += decoder.decode(value, { stream: true });
 
@@ -421,14 +530,26 @@
                         const jsonText = event.replace("data: ", "").trim();
                         if (!jsonText) continue;
 
-                        const data = JSON.parse(jsonText);
+                        let data;
+                        try {
+                            data = JSON.parse(jsonText);
+                        } catch (parseError) {
+                            console.warn("Malformed SSE data chunk skipped.", parseError, jsonText);
+                            continue;
+                        }
 
                         if (data.chunk) {
                             currentResponse.textContent += data.chunk;
                             responseBox.scrollTop = responseBox.scrollHeight;
+                            if (timeoutMessageShown) {
+                                timeoutMessageShown = false;
+                                setConnectionIndicator("streaming", "Streaming");
+                            }
                         }
 
                         if (data.error) {
+                            hasStreamError = true;
+                            setConnectionIndicator("error", "Error");
                             currentResponse.textContent += `[ERROR] ${data.error}`;
                         }
 
@@ -439,14 +560,26 @@
                 }
 
                 currentResponse.classList.remove("typing-cursor");
+                if (!hasStreamError) {
+                    setConnectionIndicator("idle", hasReceivedChunk ? "Idle" : "Idle (no chunks)");
+                }
 
             } catch (error) {
-                currentResponse.textContent += `[ERROR] ${error}`;
+                if (error.name === "AbortError") {
+                    currentResponse.textContent += "[Stopped by user]";
+                    setConnectionIndicator("idle", "Idle (stopped)");
+                } else {
+                    hasStreamError = true;
+                    currentResponse.textContent += `[ERROR] ${error.message || error}`;
+                    setConnectionIndicator("error", "Error");
+                }
                 currentResponse.classList.remove("typing-cursor");
+            } finally {
+                clearChunkWatchdog();
+                activeStreamController = null;
+                setChatRequestState(false);
+                input.focus();
             }
-
-            sendBtn.disabled = false;
-            input.focus();
         }
 
         function newChat() {
