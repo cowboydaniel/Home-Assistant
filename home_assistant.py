@@ -82,6 +82,93 @@ class SimulatedESPNetwork:
 
 esp_network = SimulatedESPNetwork()
 
+TOOLS = {
+    "get_state": {
+        "required_args": [],
+        "enum_args": {},
+    },
+    "set_device_state": {
+        "required_args": ["device", "state"],
+        "enum_args": {
+            "device": ["camera", "light", "lock"],
+            "state": ["Off", "On", "Locked", "Unlocked"],
+        },
+    },
+}
+
+
+def invoke_tool(tool_name, args=None):
+    args = args or {}
+    tool_meta = TOOLS.get(tool_name)
+
+    if tool_meta is None:
+        return {
+            "ok": False,
+            "source": "tool-dispatch",
+            "error": "unknown_tool",
+            "tool_name": tool_name,
+        }
+
+    missing_args = [arg for arg in tool_meta["required_args"] if arg not in args]
+    if missing_args:
+        return {
+            "ok": False,
+            "source": "tool-dispatch",
+            "error": "missing_required_args",
+            "missing": missing_args,
+            "tool_name": tool_name,
+        }
+
+    for arg_name, allowed_values in tool_meta["enum_args"].items():
+        if arg_name in args and args[arg_name] not in allowed_values:
+            return {
+                "ok": False,
+                "source": "tool-dispatch",
+                "error": "invalid_enum_value",
+                "arg": arg_name,
+                "allowed": allowed_values,
+                "received": args[arg_name],
+                "tool_name": tool_name,
+            }
+
+    try:
+        if tool_name == "get_state":
+            state = esp_network.get_state()
+            return {
+                "ok": True,
+                "source": state.get("source", "unknown"),
+                "payload": {
+                    "metrics": state.get("metrics", {}),
+                    "devices": state.get("devices", {}),
+                },
+            }
+
+        if tool_name == "set_device_state":
+            result = esp_network.set_device_state(args["device"], args["state"])
+            return {
+                "ok": bool(result.get("ok", True)),
+                "source": result.get("source", "unknown"),
+                "payload": {
+                    "device": result.get("device"),
+                    "state": result.get("state"),
+                },
+            }
+    except ValueError as err:
+        return {
+            "ok": False,
+            "source": "tool-dispatch",
+            "error": "validation_error",
+            "message": str(err),
+            "tool_name": tool_name,
+        }
+
+    return {
+        "ok": False,
+        "source": "tool-dispatch",
+        "error": "unhandled_tool",
+        "tool_name": tool_name,
+    }
+
 
 def build_prompt(user_input):
     return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
@@ -226,23 +313,19 @@ def restart():
 
 @app.route("/control/state", methods=["GET"])
 def control_state():
-    return jsonify(esp_network.get_state())
+    result = invoke_tool("get_state")
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 @app.route("/control/device", methods=["POST"])
 def control_device():
     payload = request.get_json(silent=True) or {}
-    device = payload.get("device")
-    state = payload.get("state")
-
-    if not device or not state:
-        return jsonify({"error": "Both 'device' and 'state' are required."}), 400
-
-    try:
-        result = esp_network.set_device_state(device, state)
-        return jsonify(result)
-    except ValueError as err:
-        return jsonify({"error": str(err)}), 400
+    result = invoke_tool("set_device_state", payload)
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
 
 
 if __name__ == "__main__":
