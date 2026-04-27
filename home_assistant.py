@@ -35,6 +35,8 @@ engine.setProperty("volume", 0.9)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "qwen2.5:1.5b"
+TOOL_CALL_MAX_DEPTH = 2
+TOOL_CALL_TIMEOUT_SECONDS = 20
 
 
 class SimulatedESPNetwork:
@@ -180,13 +182,50 @@ User: {user_input}
 Assistant:"""
 
 
+def build_tool_or_answer_prompt(user_input, tool_history):
+    tool_history_json = json.dumps(tool_history, indent=2)
+    return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
+You can either answer directly or ask for one tool call.
+Available tools:
+- get_state: takes no arguments.
+- set_device_state: args {{"device": "camera|light|lock", "state": "Off|On|Locked|Unlocked"}}
+
+Conversation user request:
+{user_input}
+
+Tool history (JSON):
+{tool_history_json}
+
+Return ONLY valid JSON with one of these shapes:
+1) {{"type":"final_answer","answer":"concise plain text"}}
+2) {{"type":"tool_call","tool_name":"get_state|set_device_state","args":{{...}}}}
+
+Do not include markdown or extra keys.
+"""
+
+
+def build_final_answer_prompt(user_input, tool_history):
+    tool_history_json = json.dumps(tool_history, indent=2)
+    return f"""You are Daniel's personal HomeAssistant running locally on a Raspberry Pi.
+Provide a concise final answer for the user.
+
+User request:
+{user_input}
+
+Tool results (JSON):
+{tool_history_json}
+
+Return plain text only.
+"""
+
+
 def get_response(prompt, model=OLLAMA_MODEL, temperature=0.7, max_tokens=500):
     try:
         response = requests.post(
             OLLAMA_URL,
             json={
                 "model": model,
-                "prompt": build_prompt(prompt),
+                "prompt": prompt,
                 "stream": False,
                 "options": {
                     "temperature": temperature,
@@ -206,6 +245,57 @@ def get_response(prompt, model=OLLAMA_MODEL, temperature=0.7, max_tokens=500):
         return "Ollama timed out."
     except Exception as e:
         return f"Ollama error: {e}"
+
+
+def run_agent_flow(user_input):
+    tool_history = []
+    start_time = time.monotonic()
+
+    for _ in range(TOOL_CALL_MAX_DEPTH + 1):
+        if time.monotonic() - start_time > TOOL_CALL_TIMEOUT_SECONDS:
+            return "I couldn't finish safely in time. Please try again."
+
+        first_pass_raw = get_response(
+            build_tool_or_answer_prompt(user_input, tool_history),
+            temperature=0.1,
+            max_tokens=280,
+        )
+
+        try:
+            first_pass = json.loads(first_pass_raw)
+        except json.JSONDecodeError:
+            return first_pass_raw
+
+        if first_pass.get("type") == "final_answer":
+            return str(first_pass.get("answer", "")).strip() or "Okay."
+
+        if first_pass.get("type") != "tool_call":
+            return "I couldn't determine the next step."
+
+        if len(tool_history) >= TOOL_CALL_MAX_DEPTH:
+            return "I hit the maximum tool-call depth. Please refine your request."
+
+        tool_name = first_pass.get("tool_name")
+        args = first_pass.get("args") if isinstance(first_pass.get("args"), dict) else {}
+        tool_result = invoke_tool(tool_name, args)
+        tool_history.append(
+            {
+                "tool_name": tool_name,
+                "args": args,
+                "result": tool_result,
+            }
+        )
+
+        second_pass = get_response(
+            build_final_answer_prompt(user_input, tool_history),
+            temperature=0.2,
+            max_tokens=220,
+        )
+
+        if second_pass and "Ollama" not in second_pass:
+            return second_pass.strip()
+
+    return "I couldn't complete that request."
 
 
 def speak(text):
@@ -240,7 +330,7 @@ def chat():
     if not user_input:
         return jsonify({"response": "No input received."}), 400
 
-    response = get_response(user_input)
+    response = run_agent_flow(user_input)
     speak(response)
     return jsonify({"response": response})
 
@@ -253,39 +343,12 @@ def chat_stream():
         return jsonify({"response": "No input received."}), 400
 
     def generate():
-        full_response = ""
-
         try:
-            response = requests.post(
-                OLLAMA_URL,
-                json={
-                    "model": OLLAMA_MODEL,
-                    "prompt": build_prompt(user_input),
-                    "stream": True,
-                    "options": {
-                        "temperature": 0.7,
-                        "num_predict": 500
-                    }
-                },
-                stream=True,
-                timeout=180
-            )
+            full_response = run_agent_flow(user_input)
 
-            response.raise_for_status()
-
-            for line in response.iter_lines():
-                if not line:
-                    continue
-
-                data = json.loads(line.decode("utf-8"))
-                chunk = data.get("response", "")
-
-                if chunk:
-                    full_response += chunk
-                    yield f"data: {json.dumps({'chunk': chunk})}\n\n"
-
-                if data.get("done", False):
-                    break
+            for token in full_response.split(" "):
+                chunk = f"{token} "
+                yield f"data: {json.dumps({'chunk': chunk})}\n\n"
 
             yield f"data: {json.dumps({'done': True})}\n\n"
 
